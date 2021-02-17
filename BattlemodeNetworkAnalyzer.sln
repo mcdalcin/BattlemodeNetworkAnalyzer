@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30907.101
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BattlemodeNetworkAnalyzer", "BattlemodeNetworkAnalyzer\BattlemodeNetworkAnalyzer.csproj", "{F10D3894-A859-4226-B346-036F5B3A0513}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F10D3894-A859-4226-B346-036F5B3A0513}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F10D3894-A859-4226-B346-036F5B3A0513}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F10D3894-A859-4226-B346-036F5B3A0513}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F10D3894-A859-4226-B346-036F5B3A0513}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {95C2FC5A-0CDD-4A9E-8675-86A891D1BB40}
+	EndGlobalSection
+EndGlobal
