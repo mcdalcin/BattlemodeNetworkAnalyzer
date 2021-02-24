@@ -1,84 +1,39 @@
-﻿using SharpPcap;
+﻿using LiveCharts;
+using LiveCharts.Configurations;
+using LiveCharts.Defaults;
+using LiveCharts.Dtos;
+using LiveCharts.Geared;
+using SharpPcap;
 using SharpPcap.Npcap;
-using SharpPcap.WinPcap;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 namespace BattlemodeNetworkAnalyzer {
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
     public partial class MainWindow : Window {
-        class PacketInfo {
-            /** Time of sending/receiving packet. */
-            public DateTime time;
-
-            /** Length in bytes. */
-            public int length;
-
-            public PacketInfo(DateTime time, int length) {
-                this.time = time;
-                this.length = length;
-            }
-        }
-
-        class IPInfo {
-            public List<PacketInfo> outboundPackets = new List<PacketInfo>();
-            public List<PacketInfo> inboundPackets = new List<PacketInfo>();
-
-            public string serverIp;
-            public IPInfo(string serverIp) {
-                this.serverIp = serverIp;
-            }
-        }
-
-        class CaptureDeviceInfo {
-            public CaptureDeviceInfo(NpcapDevice device) {
-                this.device = device;
-
-                foreach (var addr in device.Addresses) {
-                    if (addr.Addr != null && addr.Addr.ipAddress != null && addr.Netmask != null) {
-                        IPAddress ipOut;
-                        string ipAddressStr = addr.Addr.ipAddress.ToString();
-                        if (IPAddress.TryParse(ipAddressStr, out ipOut)) {
-                            if (ipOut.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) {
-                                ipv4Address = ipOut.ToString();
-                            }
-                        }
-                    }
-                }
-            }
-            
-            public NpcapDevice device;
-            public string ipv4Address;
-        }
 
         /** Info about the currently capturing device. */
         private CaptureDeviceInfo _captureDeviceInfo;
 
         /** IP Address to statistical information. */
-        private Dictionary<string, IPInfo> _addressToInfo = new Dictionary<string, IPInfo>();
+        private Dictionary<string, IPInfo> _addressToInfo =
+            new Dictionary<string, IPInfo>();
         private Object _addressToInfoLock = new Object();
-       
+
+        private string _initializedIp = "";
+
         public MainWindow() {
             InitializeComponent();
             InitializeDevices();
-            
+            DataContext = this;
+
             new Thread(ShowStatistics).Start();
         }
 
@@ -87,22 +42,14 @@ namespace BattlemodeNetworkAnalyzer {
             // the entire container. Therefore, we only do it every 5 seconds.
             while (true) {
                 Application.Current.Dispatcher.Invoke(
-                    new Action(() => {
-                        lock (_addressToInfoLock) {
-
-                            cbIps.Items.Clear();
-                            foreach (string ip in _addressToInfo.Keys) {
-                                cbIps.Items.Add(ip);
-                            }
-                        }
-                    }));
-                Thread.Sleep(5000);
-            }
-        }
-
-        private void RefreshInfo() {
+                    () => {
+                        RefreshInfo(null, null);
+                        return true;
+                    });
+                Thread.Sleep(100);
 
         }
+    }
 
         private void InitializeDevices() {
             var devices = NpcapDeviceList.Instance;
@@ -122,6 +69,10 @@ namespace BattlemodeNetworkAnalyzer {
         private void StartCapturing(object sender, RoutedEventArgs e) {
             var devices = NpcapDeviceList.Instance;
             
+            if (_captureDeviceInfo != null) {
+                return;
+            }
+
             if (cbDevices.SelectedIndex < 0) {
                 return;
             }
@@ -134,7 +85,7 @@ namespace BattlemodeNetworkAnalyzer {
                 new PacketArrivalEventHandler(OnPacketArrival);
 
             int readTimeoutMilliseconds = 1000;
-            device.Open(DeviceMode.Promiscuous, readTimeoutMilliseconds);
+            device.Open(DeviceMode.Normal, readTimeoutMilliseconds);
 
             // Trace.WriteLine("Listening on " + device.ToString() + "..." + device.Name + " ... " + device.MacAddress.ToString());
 
@@ -151,8 +102,105 @@ namespace BattlemodeNetworkAnalyzer {
             _captureDeviceInfo = null;
         }
 
+        /** May only be called from UI thread. */
         private void RefreshInfo(object sender, RoutedEventArgs e) {
+            lock (_addressToInfoLock) {
+                // Check for currently selected item.
+                string selectedIp =
+                    cbIps.SelectedItem == null
+                        ? "" 
+                        : cbIps.SelectedItem.ToString();
+                int index = 0;
+                int selectedIpIndex = -1;
+                List<string> ips = new List<string>();
+                foreach (string ip in _addressToInfo.Keys) {
+                    // Filter out any spurious UDP packets. 
+                    IPInfo ipInfo = _addressToInfo[ip];
+                    if (ipInfo.inboundChartValues.Count + ipInfo.inboundPackets.Count < 100 ||
+                        ipInfo.outboundChartValues.Count + ipInfo.outboundPackets.Count < 100) {
+                        continue;
+                    }
+                    ips.Add(ip);
+                    if (ip.Equals(selectedIp)) {
+                        selectedIpIndex = index;
+                    }
+                    index++;
+                }
 
+                if (ips.Count != cbIps.Items.Count) {
+                    cbIps.Items.Clear();
+                    foreach (string ip in ips) {
+                        cbIps.Items.Add(ip);
+                    }
+                    cbIps.SelectedIndex = selectedIpIndex;
+                }
+
+                // Update the map for the selected IP.
+                var secondConfig = Mappers.Weighted<DateTimePoint>()
+                    .X((x, index) => index)
+                    .Y(x => x.Value);
+                var pointConfig = Mappers.Xy<CorePoint>()
+                    .X(corePoint => corePoint.X)
+                    .Y(corePoint => corePoint.Y);
+                if (_addressToInfo.ContainsKey(selectedIp)) {
+                    var ipInfo = _addressToInfo[selectedIp];
+
+                    tbIpInfo.Text = ipInfo.ToString();
+
+                    // Update the chart values.
+                    ipInfo.TransferToChartValues();
+
+                    if (_initializedIp.Equals(selectedIp)) {
+                        return;
+                    }
+                    
+                    // Inbound packet length graph.
+                    InboundGraph.Series = new SeriesCollection(secondConfig) {
+                        new GLineSeries {
+                            Values = ipInfo.inboundChartValues,
+                            Fill = Brushes.Transparent,
+                            PointGeometrySize = 0,
+                            LineSmoothness = 1,
+                            StrokeThickness = 1
+                        },
+                    };
+
+                    // Outbound packet length graph.
+                    OutboundGraph.Series = new SeriesCollection(secondConfig) {
+                        new GLineSeries {
+                            Values = ipInfo.outboundChartValues,
+                            Fill = Brushes.Transparent,
+                            PointGeometrySize = 0,
+                            LineSmoothness = 1,
+                            StrokeThickness = 1
+                        },
+                    };
+
+                    // Inbound time diff graph.
+                    InboundTimeDiffGraph.Series = new SeriesCollection(pointConfig) {
+                        new GLineSeries {
+                            Values = ipInfo.inboundTimeDiffChartValues,
+                            Fill = Brushes.Transparent,
+                            PointGeometrySize = 0,
+                            LineSmoothness = 1,
+                            StrokeThickness = 1
+                        },
+                    };
+
+                    // Outbound time diff graph.
+                    OutboundTimeDiffGraph.Series = new SeriesCollection(pointConfig) {
+                        new GLineSeries {
+                            Values = ipInfo.outboundTimeDiffChartValues,
+                            Fill = Brushes.Transparent,
+                            PointGeometrySize = 0,
+                            LineSmoothness = 1,
+                            StrokeThickness = 1
+                        },
+                    };
+
+                    _initializedIp = selectedIp;
+                }
+            }
         }
 
         private void OnPacketArrival(object sender, CaptureEventArgs e) {
@@ -170,25 +218,21 @@ namespace BattlemodeNetworkAnalyzer {
                 // Verify that one of the addresses equals our capture device IP.
                 if (srcIp.ToString().Equals(_captureDeviceInfo.ipv4Address)) {
                     isInbound = false;
-                    serverIp = destIp.ToString();
+                    serverIp = destIp.ToString() + " src_port: " + udpPacket.SourcePort + " dest_port: " + udpPacket.DestinationPort;
                 } else if (destIp.ToString().Equals(_captureDeviceInfo.ipv4Address)) {
                     isInbound = true;
-                    serverIp = srcIp.ToString();
+                    serverIp = srcIp.ToString() + " src_port: " + udpPacket.DestinationPort + " dest_port: " + udpPacket.SourcePort;
                 } else {
-                    // This should never happen, but if it does, let's report the error.
-                    Trace.WriteLine(
-                        "Neither src nor dest ip matches current device IP. " + 
-                        srcIp.ToString() + " " + destIp.ToString() + " " + 
-                        _captureDeviceInfo.ipv4Address);
+                    // We don't care about these packets.
                     return;
                 }
                 // Look to see if we have encountered the IP already.
                 lock (_addressToInfoLock) {
-                    IPInfo info =
-                        _addressToInfo.ContainsKey(serverIp)
-                            ? _addressToInfo[serverIp]
-                            : new IPInfo(serverIp);
-
+                    if (!_addressToInfo.ContainsKey(serverIp)) {
+                        _addressToInfo[serverIp] = new IPInfo(serverIp);
+                    }
+                    IPInfo info = _addressToInfo[serverIp];
+                    
                     // Create the packet.
                     PacketInfo packetInfo = new PacketInfo(time, length);
                     if (isInbound) {
